@@ -1,0 +1,36 @@
+src/storage/disk_manager.cpp
+  s_ae2501d0a4718c::t_e9e1e9a7c42f65 7,31-43,54-66,126-135,143-151,160-178,186-195
+src/record/rm_scan.cpp
+  s_ae2501d0a4718c::t_59dbfde40d62de 13-14,21-46,53,59
+report/RUCBASE-Lab1-存储管理实验报告.md
+  h_71457205b507dd 1-47
+src/storage/buffer_pool_manager.cpp
+  s_ae2501d0a4718c::t_d219350c3def3c 6,8,15-23,34-47,59-94,104-122,132-136,138-140,150-167,176-186,188-195,203-213
+  s_ae2501d0a4718c::t_d324280df227b6 7
+src/record/rm_file_handle.cpp
+  s_ae2501d0a4718c::t_59dbfde40d62de 13-17,19-26,36-43,45-58,76-97,107-124,136-143,151-155,157-163,173-176,183-185
+  s_ae2501d0a4718c::t_761a4440030c7b 44
+src/replacer/lru_replacer.cpp
+  s_ae2501d0a4718c::t_e9e1e9a7c42f65 20-22,24-26,36-41,49-57,63-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cdbd17c5480d6fa0510cd0e1e63d801731ad50fc",
+  "prompts": {},
+  "humans": {
+    "h_71457205b507dd": {
+      "author": "Rcb725 <ricebean725@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_ae2501d0a4718c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13f38-d36d-7c90-804d-69cabef04ebb",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Rcb725 <ricebean725@gmail.com>"
+    }
+  }
+}
