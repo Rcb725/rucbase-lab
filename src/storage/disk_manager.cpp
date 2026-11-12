@@ -4,6 +4,7 @@
 #include "storage/disk_manager.h"
 
 #include <assert.h>    // for assert
+#include <fcntl.h>     // for open
 #include <sys/stat.h>  // for stat
 #include <unistd.h>    // for lseek
 
@@ -27,10 +28,19 @@ DiskManager::DiskManager() = default;
  * @param {int} num_bytes 要写入磁盘的数据大小
  */
 void DiskManager::write_page(int fd, page_id_t page_no, const char* offset, int num_bytes) {
-    // Todo:
-    // 1.lseek()定位到文件头，通过(fd,page_no)可以定位指定页面及其在磁盘文件中的偏移量
-    // 2.调用write()函数
-    // 注意write返回值与num_bytes不等时 throw InternalError("DiskManager::write_page Error");
+    if (fd < 0 || page_no < 0 || offset == nullptr || num_bytes < 0) {
+        throw InternalError("DiskManager::write_page invalid argument");
+    }
+
+    const off_t file_offset = static_cast<off_t>(page_no) * PAGE_SIZE;
+    if (lseek(fd, file_offset, SEEK_SET) < 0) {
+        throw UnixError();
+    }
+
+    const ssize_t bytes_written = write(fd, offset, static_cast<size_t>(num_bytes));
+    if (bytes_written != num_bytes) {
+        throw InternalError("DiskManager::write_page Error");
+    }
 }
 
 /**
@@ -41,10 +51,19 @@ void DiskManager::write_page(int fd, page_id_t page_no, const char* offset, int 
  * @param {int} num_bytes 读取的数据量大小
  */
 void DiskManager::read_page(int fd, page_id_t page_no, char* offset, int num_bytes) {
-    // Todo:
-    // 1.lseek()定位到文件头，通过(fd,page_no)可以定位指定页面及其在磁盘文件中的偏移量
-    // 2.调用read()函数
-    // 注意read返回值与num_bytes不等时，throw InternalError("DiskManager::read_page Error");
+    if (fd < 0 || page_no < 0 || offset == nullptr || num_bytes < 0) {
+        throw InternalError("DiskManager::read_page invalid argument");
+    }
+
+    const off_t file_offset = static_cast<off_t>(page_no) * PAGE_SIZE;
+    if (lseek(fd, file_offset, SEEK_SET) < 0) {
+        throw UnixError();
+    }
+
+    const ssize_t bytes_read = read(fd, offset, static_cast<size_t>(num_bytes));
+    if (bytes_read != num_bytes) {
+        throw InternalError("DiskManager::read_page Error");
+    }
 }
 
 /**
@@ -104,9 +123,16 @@ bool DiskManager::is_file(const std::string& path) {
  * @param {string} &path
  */
 void DiskManager::create_file(const std::string& path) {
-    // Todo:
-    // 调用open()函数，使用O_CREAT模式
-    // 注意不能重复创建相同文件
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+    if (fd < 0) {
+        if (errno == EEXIST) {
+            throw FileExistsError(path);
+        }
+        throw UnixError();
+    }
+    if (close(fd) < 0) {
+        throw UnixError();
+    }
 }
 
 /**
@@ -114,9 +140,15 @@ void DiskManager::create_file(const std::string& path) {
  * @param {string} &path 文件所在路径
  */
 void DiskManager::destroy_file(const std::string& path) {
-    // Todo:
-    // 调用unlink()函数
-    // 注意不能删除未关闭的文件
+    if (!is_file(path)) {
+        throw FileNotFoundError(path);
+    }
+    if (path2fd_.contains(path)) {
+        throw FileNotClosedError(path);
+    }
+    if (unlink(path.c_str()) < 0) {
+        throw UnixError();
+    }
 }
 
 /**
@@ -125,10 +157,25 @@ void DiskManager::destroy_file(const std::string& path) {
  * @param {string} &path 文件所在路径
  */
 int DiskManager::open_file(const std::string& path) {
-    // Todo:
-    // 调用open()函数，使用O_RDWR模式
-    // 注意不能重复打开相同文件，并且需要更新文件打开列表
-    return -1;
+    if (!is_file(path)) {
+        throw FileNotFoundError(path);
+    }
+    if (path2fd_.contains(path)) {
+        throw FileNotClosedError(path);
+    }
+
+    int fd = open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+        throw UnixError();
+    }
+    if (fd >= MAX_FD) {
+        close(fd);
+        throw InternalError("file descriptor exceeds DiskManager::MAX_FD");
+    }
+
+    path2fd_[path] = fd;
+    fd2path_[fd] = path;
+    return fd;
 }
 
 /**
@@ -136,9 +183,16 @@ int DiskManager::open_file(const std::string& path) {
  * @param {int} fd 打开的文件的文件句柄
  */
 void DiskManager::close_file(int fd) {
-    // Todo:
-    // 调用close()函数
-    // 注意不能关闭未打开的文件，并且需要更新文件打开列表
+    const auto it = fd2path_.find(fd);
+    if (it == fd2path_.end()) {
+        throw FileNotOpenError(fd);
+    }
+    if (close(fd) < 0) {
+        throw UnixError();
+    }
+
+    path2fd_.erase(it->second);
+    fd2path_.erase(it);
 }
 
 /**

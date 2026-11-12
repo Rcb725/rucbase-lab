@@ -10,11 +10,20 @@
  * @return {unique_ptr<RmRecord>} rid对应的记录对象指针
  */
 std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid& rid, Context* context) const {
-    // Todo:
-    // 1. 获取指定记录所在的page handle
-    // 2. 初始化一个指向RmRecord的指针（赋值其内部的data和size）
+    (void)context;
+    if (rid.page_no < RM_FIRST_RECORD_PAGE || rid.page_no >= file_hdr_.num_pages || rid.slot_no < 0 ||
+        rid.slot_no >= file_hdr_.num_records_per_page) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
 
-    return nullptr;
+    RmPageGuard page = fetch_page_guard(rid.page_no);
+    if (!page.valid()) {
+        throw InternalError("failed to fetch record page");
+    }
+    if (!Bitmap::is_set(page->bitmap, rid.slot_no)) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
+    return std::make_unique<RmRecord>(file_hdr_.record_size, page->get_slot(rid.slot_no));
 }
 
 /**
@@ -24,14 +33,29 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid& rid, Context* cont
  * @return {Rid} 插入的记录的记录号（位置）
  */
 Rid RmFileHandle::insert_record(const char* buf, Context* context) {
-    // Todo:
-    // 1. 获取当前未满的page handle
-    // 2. 在page handle中找到空闲slot位置
-    // 3. 将buf复制到空闲slot位置
-    // 4. 更新page_handle.page_hdr中的数据结构
-    // 注意考虑插入一条记录后页面已满的情况，需要更新file_hdr_.first_free_page_no
+    (void)context;
+    if (buf == nullptr) {
+        throw InternalError("cannot insert a record from null data");
+    }
 
-    return Rid{.page_no = RM_NO_PAGE, .slot_no = -1};
+    RmPageHandle page = create_page_handle();
+    const int slot_no = Bitmap::first_bit(false, page.bitmap, file_hdr_.num_records_per_page);
+    if (slot_no >= file_hdr_.num_records_per_page) {
+        buffer_pool_manager_->unpin_page(page.page->get_page_id(), false);
+        throw InternalError("free page has no free record slot");
+    }
+
+    memcpy(page.get_slot(slot_no), buf, static_cast<size_t>(file_hdr_.record_size));
+    Bitmap::set(page.bitmap, slot_no);
+    page.page_hdr->num_records++;
+    const Rid rid{.page_no = page.page->get_page_id().page_no, .slot_no = slot_no};
+
+    if (page.page_hdr->num_records == file_hdr_.num_records_per_page) {
+        file_hdr_.first_free_page_no = page.page_hdr->next_free_page_no;
+        page.page_hdr->next_free_page_no = RM_NO_PAGE;
+    }
+    buffer_pool_manager_->unpin_page(page.page->get_page_id(), true);
+    return rid;
 }
 
 /**
@@ -49,10 +73,28 @@ void RmFileHandle::insert_record(const Rid& rid, const char* buf) {
  * @param {Context*} context
  */
 void RmFileHandle::delete_record(const Rid& rid, Context* context) {
-    // Todo:
-    // 1. 获取指定记录所在的page handle
-    // 2. 更新page_handle.page_hdr中的数据结构
-    // 注意考虑删除一条记录后页面未满的情况，需要调用release_page_handle()
+    (void)context;
+    if (rid.page_no < RM_FIRST_RECORD_PAGE || rid.page_no >= file_hdr_.num_pages || rid.slot_no < 0 ||
+        rid.slot_no >= file_hdr_.num_records_per_page) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
+
+    RmPageGuard page = fetch_page_guard(rid.page_no);
+    if (!page.valid()) {
+        throw InternalError("failed to fetch record page");
+    }
+    RmPageHandle& handle = page.handle();
+    if (!Bitmap::is_set(handle.bitmap, rid.slot_no)) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
+
+    const bool was_full = handle.page_hdr->num_records == file_hdr_.num_records_per_page;
+    Bitmap::reset(handle.bitmap, rid.slot_no);
+    handle.page_hdr->num_records--;
+    if (was_full) {
+        release_page_handle(handle);
+    }
+    page.mark_dirty();
 }
 
 /**
@@ -62,9 +104,24 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
  * @param {Context*} context
  */
 void RmFileHandle::update_record(const Rid& rid, const char* buf, Context* context) {
-    // Todo:
-    // 1. 获取指定记录所在的page handle
-    // 2. 更新记录
+    (void)context;
+    if (buf == nullptr) {
+        throw InternalError("cannot update a record from null data");
+    }
+    if (rid.page_no < RM_FIRST_RECORD_PAGE || rid.page_no >= file_hdr_.num_pages || rid.slot_no < 0 ||
+        rid.slot_no >= file_hdr_.num_records_per_page) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
+
+    RmPageGuard page = fetch_page_guard(rid.page_no);
+    if (!page.valid()) {
+        throw InternalError("failed to fetch record page");
+    }
+    if (!Bitmap::is_set(page->bitmap, rid.slot_no)) {
+        throw RecordNotFoundError(rid.page_no, rid.slot_no);
+    }
+    memcpy(page->get_slot(rid.slot_no), buf, static_cast<size_t>(file_hdr_.record_size));
+    page.mark_dirty();
 }
 
 /**
@@ -76,11 +133,14 @@ void RmFileHandle::update_record(const Rid& rid, const char* buf, Context* conte
  * @return {RmPageHandle} 指定页面的句柄
  */
 RmPageHandle RmFileHandle::fetch_page_handle(int page_no) const {
-    // Todo:
-    // 使用缓冲池获取指定页面，并生成page_handle返回给上层
-    // if page_no is invalid, throw PageNotExistError exception
-
-    return {&file_hdr_, nullptr};
+    if (page_no < RM_FIRST_RECORD_PAGE || page_no >= file_hdr_.num_pages) {
+        throw PageNotExistError("record file", page_no);
+    }
+    Page* page = buffer_pool_manager_->fetch_page(PageId{.fd = fd_, .page_no = page_no});
+    if (page == nullptr) {
+        throw InternalError("buffer pool has no available frame");
+    }
+    return {&file_hdr_, page};
 }
 
 /**
@@ -88,12 +148,19 @@ RmPageHandle RmFileHandle::fetch_page_handle(int page_no) const {
  * @return {RmPageHandle} 新的PageHandle
  */
 RmPageHandle RmFileHandle::create_new_page_handle() {
-    // Todo:
-    // 1.使用缓冲池来创建一个新page
-    // 2.更新page handle中的相关信息
-    // 3.更新file_hdr_
+    PageId page_id{.fd = fd_, .page_no = INVALID_PAGE_ID};
+    Page* page = buffer_pool_manager_->new_page(&page_id);
+    if (page == nullptr) {
+        throw InternalError("buffer pool has no available frame");
+    }
 
-    return {&file_hdr_, nullptr};
+    RmPageHandle handle(&file_hdr_, page);
+    handle.page_hdr->next_free_page_no = file_hdr_.first_free_page_no;
+    handle.page_hdr->num_records = 0;
+    Bitmap::init(handle.bitmap, file_hdr_.bitmap_size);
+    file_hdr_.num_pages = page_id.page_no + 1;
+    file_hdr_.first_free_page_no = page_id.page_no;
+    return handle;
 }
 
 /**
@@ -103,21 +170,17 @@ RmPageHandle RmFileHandle::create_new_page_handle() {
  * @note pin the page, remember to unpin it outside!
  */
 RmPageHandle RmFileHandle::create_page_handle() {
-    // Todo:
-    // 1. 判断file_hdr_中是否还有空闲页
-    //     1.1 没有空闲页：使用缓冲池来创建一个新page；可直接调用create_new_page_handle()
-    //     1.2 有空闲页：直接获取第一个空闲页
-    // 2. 生成page handle并返回给上层
-
-    return {&file_hdr_, nullptr};
+    if (file_hdr_.first_free_page_no == RM_NO_PAGE) {
+        return create_new_page_handle();
+    }
+    return fetch_page_handle(file_hdr_.first_free_page_no);
 }
 
 /**
  * @description: 当一个页面从没有空闲空间的状态变为有空闲空间状态时，更新文件头和页头中空闲页面相关的元数据
  */
 void RmFileHandle::release_page_handle(RmPageHandle& page_handle) {
-    // Todo:
-    // 当page从已满变成未满，考虑如何更新：
-    // 1. page_handle.page_hdr->next_free_page_no
-    // 2. file_hdr_.first_free_page_no
+    const page_id_t page_no = page_handle.page->get_page_id().page_no;
+    page_handle.page_hdr->next_free_page_no = file_hdr_.first_free_page_no;
+    file_hdr_.first_free_page_no = page_no;
 }
