@@ -269,4 +269,7 @@ public:
 private:
     void set_root_page(page_id_t root) { file_header_->root_page_ = root; }
     [[nodiscard]] bool is_empty() const { return file_header_->root_page_ == INDEX_NO_PAGE; }
+    bool get_value_impl(const char* key, std::vector<Rid>* result);
+    IndexPosition lower_bound_impl(const char* key);
+    IndexPosition upper_bound_impl(const char* key);
 };
