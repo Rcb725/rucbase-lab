@@ -1,0 +1,14 @@
+report/RUCBASE-Lab2-索引管理实验报告.md
+  h_71457205b507dd 10,16,20,22,24,30,32,52,57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9800cd02e54e5bdf34ff0c61e8c2ae40a9610a8",
+  "prompts": {},
+  "humans": {
+    "h_71457205b507dd": {
+      "author": "Rcb725 <ricebean725@gmail.com>"
+    }
+  }
+}
